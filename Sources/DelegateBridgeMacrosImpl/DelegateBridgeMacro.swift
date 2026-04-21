@@ -246,82 +246,91 @@ private func buildWitnessStruct(
     methods: [FunctionDeclSyntax]
 ) -> ClassDeclSyntax {
 
-    // Closure properties
+    let I1 = "    "        // 1-level indent (inside class body)
+    let I2 = I1 + I1       // 2-level indent (inside method body)
+    let I3 = I2 + I1       // 3-level indent (arguments in multi-line calls)
+
+    // Private closure storage. Prefixed with `_` to avoid redeclaration
+    // conflicts with same-named protocol methods (especially zero-arg ones).
     let closureProps = methods.map { fn -> String in
         let params = fn.signature.parameterClause.parameters
         let paramTypes = params.map(\.typeText).joined(separator: ", ")
-        return "    var \(fn.name.text): (\(paramTypes)) -> Void"
+        return "\(I1)private let _\(fn.name.text): (\(paramTypes)) -> Void"
     }.joined(separator: "\n")
 
-    // init from concrete type
-    let concreteInit: String = {
-        let assignments = methods.map { fn -> String in
-            let params = fn.signature.parameterClause.parameters
-            let argNames = params.enumerated().map { (i, p) -> String in
-                p.secondName?.text ?? p.firstName.text
-            }
-            let closure: String
-            if argNames.isEmpty {
-                closure = "{ delegate.\(fn.name.text)() }"
-            } else {
-                let argList = argNames.joined(separator: ", ")
-                let callArgs = params.map { p -> String in
-                    let ext = p.firstName.text
-                    let int = p.secondName?.text ?? ext
-                    if ext == "_" { return int }
-                    if ext == int {
-                        return "\(ext): \(int)"
-                    } else {
-                        return "\(ext): \(int)"
-                    }
-                }.joined(separator: ", ")
-                closure = "{ \(argList) in delegate.\(fn.name.text)(\(callArgs)) }"
-            }
-            return "        \(fn.name.text): \(closure)"
-        }.joined(separator: ",\n")
-        return """
-            convenience init(delegate: some \(protoName)) {
-                self.init(
-        \(assignments)
-                )
-            }
-        """
-    }()
+    // Designated init: takes one closure per method.
+    let initParamList = methods.map { fn -> String in
+        let params = fn.signature.parameterClause.parameters
+        let types = params.map(\.typeText).joined(separator: ", ")
+        return "\(fn.name.text): @escaping (\(types)) -> Void"
+    }.joined(separator: ",\n\(I2)")
 
-    // factory from AsyncStream bridge
-    let bridgeFactory: String = {
-        let assignments = methods.map { fn -> String in
-            let params = fn.signature.parameterClause.parameters
-            let argNames = (0..<params.count).map { "a\($0)" }
+    let initAssignments = methods.map { fn in
+        "\(I2)self._\(fn.name.text) = \(fn.name.text)"
+    }.joined(separator: "\n")
 
-            let closure: String
-            if argNames.isEmpty {
-                closure = "{ bridge._continuation.yield(.\(fn.name.text)) }"
-            } else {
-                let argList = argNames.joined(separator: ", ")
-                let yieldArgs = params.enumerated().map { (i, p) -> String in
-                    let label = p.firstName.text == "_" ? "" : p.firstName.text
-                    let varName = argNames[i]
-                    if label.isEmpty {
-                        return varName
-                    } else {
-                        return "\(label): \(varName)"
-                    }
-                }.joined(separator: ", ")
-                closure = "{ \(argList) in bridge._continuation.yield(.\(fn.name.text)(\(yieldArgs))) }"
-            }
-            return "        \(fn.name.text): \(closure)"
-        }.joined(separator: ",\n")
-        return """
-            static func streamBacked(_ bridge: \(protoName)AsyncBridge) -> Self {
-                .init(
-        \(assignments)
-                )
-            }
-        """
-    }()
+    let designatedInit = """
+    \(I1)init(
+    \(I2)\(initParamList)
+    \(I1)) {
+    \(initAssignments)
+    \(I1)}
+    """
 
-    // Protocol conformance impl (wraps the closures)
+    // Convenience init wrapping a concrete delegate value.
+    let concreteAssignments = methods.map { fn -> String in
+        let params = fn.signature.parameterClause.parameters
+        let closure: String
+        if params.isEmpty {
+            closure = "{ delegate.\(fn.name.text)() }"
+        } else {
+            let argNames = params.map { p in p.secondName?.text ?? p.firstName.text }
+            let callArgs = params.map { p -> String in
+                let ext = p.firstName.text
+                let int = p.secondName?.text ?? ext
+                if ext == "_" { return int }
+                return "\(ext): \(int)"
+            }.joined(separator: ", ")
+            closure = "{ \(argNames.joined(separator: ", ")) in delegate.\(fn.name.text)(\(callArgs)) }"
+        }
+        return "\(I3)\(fn.name.text): \(closure)"
+    }.joined(separator: ",\n")
+
+    let concreteInit = """
+    \(I1)convenience init(delegate: some \(protoName)) {
+    \(I2)self.init(
+    \(concreteAssignments)
+    \(I2))
+    \(I1)}
+    """
+
+    // Static factory building a witness backed by an AsyncStream bridge.
+    let bridgeAssignments = methods.map { fn -> String in
+        let params = fn.signature.parameterClause.parameters
+        let argNames = (0..<params.count).map { "a\($0)" }
+        let closure: String
+        if argNames.isEmpty {
+            closure = "{ bridge._continuation.yield(.\(fn.name.text)) }"
+        } else {
+            let yieldArgs = params.enumerated().map { (i, p) -> String in
+                let label = p.firstName.text == "_" ? "" : p.firstName.text
+                let v = argNames[i]
+                return label.isEmpty ? v : "\(label): \(v)"
+            }.joined(separator: ", ")
+            closure = "{ \(argNames.joined(separator: ", ")) in bridge._continuation.yield(.\(fn.name.text)(\(yieldArgs))) }"
+        }
+        return "\(I3)\(fn.name.text): \(closure)"
+    }.joined(separator: ",\n")
+
+    let bridgeFactory = """
+    \(I1)static func streamBacked(_ bridge: \(protoName)AsyncBridge) -> Self {
+    \(I2).init(
+    \(bridgeAssignments)
+    \(I2))
+    \(I1)}
+    """
+
+    // Protocol conformance: forward to the underscored stored closure.
     let conformanceImpl = methods.map { fn -> String in
         let params = fn.signature.parameterClause.parameters
         let paramList = params.map { p -> String in
@@ -337,11 +346,11 @@ private func buildWitnessStruct(
             p.secondName?.text ?? p.firstName.text
         }.joined(separator: ", ")
         return """
-            func \(fn.name.text)(\(paramList)) {
-                \(fn.name.text)(\(argList))
-            }
+        \(I1)func \(fn.name.text)(\(paramList)) {
+        \(I2)_\(fn.name.text)(\(argList))
+        \(I1)}
         """
-    }.joined(separator: "\n    ")
+    }.joined(separator: "\n")
 
     let src = """
     /// Auto-generated protocol-witness struct for `\(protoName)`.
@@ -361,20 +370,14 @@ private func buildWitnessStruct(
     final class \(protoName)Witness: \(protoName) {
     \(closureProps)
 
-        init(\(methods.map { fn -> String in
-            let params = fn.signature.parameterClause.parameters
-            let types = params.map(\.typeText).joined(separator: ", ")
-            return "\(fn.name.text): @escaping (\(types)) -> Void"
-        }.joined(separator: ",\n        "))) {
-    \(methods.map { "        self.\($0.name.text) = \($0.name.text)" }.joined(separator: "\n"))
-        }
+    \(designatedInit)
 
-        \(concreteInit)
+    \(concreteInit)
 
-        \(bridgeFactory)
+    \(bridgeFactory)
 
-        // MARK: - \(protoName) conformance
-        \(conformanceImpl)
+    \(I1)// MARK: - \(protoName) conformance
+    \(conformanceImpl)
     }
     """
     return try! ClassDeclSyntax("\(raw: src)")
