@@ -51,5 +51,5 @@
 @attached(peer, names: suffixed(Event), suffixed(AsyncBridge), suffixed(Witness))
 public macro AsyncStreamBridge() = #externalMacro(
     module: "DelegateBridgeMacros",
-    type:   "DelegateBridgeMacrosImpl.AsyncStreamBridgeMacro"
+    type:   "AsyncStreamBridgeMacro"
 )
