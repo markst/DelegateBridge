@@ -7,18 +7,18 @@ import Foundation
 // MARK: - Diagnostics
 
 enum DelegateBridgeDiagnostic: DiagnosticMessage {
-    case notAProtocol
+    case notAProtocol(macroName: String)
     case voidReturnRequired(method: String)
-    case noMethods
+    case noMethods(macroName: String)
 
     var message: String {
         switch self {
-        case .notAProtocol:
-            return "@AsyncStreamBridge can only be applied to protocols"
+        case .notAProtocol(let name):
+            return "@\(name) can only be applied to protocols"
         case .voidReturnRequired(let method):
             return "Delegate method '\(method)' must return Void to be bridged to AsyncStream"
-        case .noMethods:
-            return "@AsyncStreamBridge requires at least one method in the protocol"
+        case .noMethods(let name):
+            return "@\(name) requires at least one method in the protocol"
         }
     }
 
@@ -53,75 +53,121 @@ private extension FunctionSignatureSyntax {
     }
 }
 
-// MARK: - @AsyncStreamBridge
+// MARK: - Shared Validation
 
-/// Applied to a protocol. Generates:
-///   1. A concrete `<Protocol>AsyncBridge` class that implements the protocol
-///      and exposes one `AsyncStream<Event>` per method (or a unified enum stream).
-///   2. A protocol-witness struct `<Protocol>Witness` mirroring each method
-///      as a closure property, with a static factory that wraps an `AsyncStream` source.
+private func validateProtocol(
+    macroName: String,
+    node: AttributeSyntax,
+    declaration: some DeclSyntaxProtocol,
+    context: some MacroExpansionContext
+) -> (protoName: String, methods: [FunctionDeclSyntax])? {
+    guard let proto = declaration.as(ProtocolDeclSyntax.self) else {
+        context.diagnose(Diagnostic(
+            node: node,
+            message: DelegateBridgeDiagnostic.notAProtocol(macroName: macroName)
+        ))
+        return nil
+    }
+
+    let protoName = proto.name.text
+
+    let allMethods: [FunctionDeclSyntax] = proto.memberBlock.members.compactMap {
+        $0.decl.as(FunctionDeclSyntax.self)
+    }
+
+    guard !allMethods.isEmpty else {
+        context.diagnose(Diagnostic(
+            node: node,
+            message: DelegateBridgeDiagnostic.noMethods(macroName: macroName)
+        ))
+        return nil
+    }
+
+    let bridgeable = allMethods.filter { fn in
+        guard fn.signature.isVoidReturn else {
+            context.diagnose(Diagnostic(
+                node: fn,
+                message: DelegateBridgeDiagnostic.voidReturnRequired(method: fn.name.text)
+            ))
+            return false
+        }
+        return true
+    }
+
+    return (protoName, bridgeable)
+}
+
+// MARK: - @AsyncStreamBridge (Event enum + AsyncBridge class only)
+
+/// Generates `<Protocol>Event` and `<Protocol>AsyncBridge` for the annotated protocol.
 public struct AsyncStreamBridgeMacro: PeerMacro {
-
     public static func expansion(
         of node: AttributeSyntax,
         providingPeersOf declaration: some DeclSyntaxProtocol,
         in context: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
-
-        // ── 1. Validate target ───────────────────────────────────────────────
-        guard let proto = declaration.as(ProtocolDeclSyntax.self) else {
-            context.diagnose(Diagnostic(
-                node: node,
-                message: DelegateBridgeDiagnostic.notAProtocol
-            ))
-            return []
-        }
-
-        let protoName = proto.name.text
-
-        // ── 2. Collect methods ───────────────────────────────────────────────
-        let methods: [FunctionDeclSyntax] = proto.memberBlock.members.compactMap {
-            $0.decl.as(FunctionDeclSyntax.self)
-        }
-
-        guard !methods.isEmpty else {
-            context.diagnose(Diagnostic(
-                node: node,
-                message: DelegateBridgeDiagnostic.noMethods
-            ))
-            return []
-        }
-
-        // Only bridge void-returning methods; warn on others
-        let bridgeable = methods.filter { fn in
-            guard fn.signature.isVoidReturn else {
-                context.diagnose(Diagnostic(
-                    node: fn,
-                    message: DelegateBridgeDiagnostic.voidReturnRequired(method: fn.name.text)
-                ))
-                return false
-            }
-            return true
-        }
-
-        // ── 3. Build Event enum ──────────────────────────────────────────────
-        let eventEnum   = buildEventEnum(protoName: protoName, methods: bridgeable)
-
-        // ── 4. Build Bridge class ────────────────────────────────────────────
-        let bridgeClass = buildBridgeClass(protoName: protoName, methods: bridgeable)
-
-        // ── 5. Build Witness struct ──────────────────────────────────────────
-        let witnessStruct = buildWitnessStruct(protoName: protoName, methods: bridgeable)
+        guard let (protoName, methods) = validateProtocol(
+            macroName: "AsyncStreamBridge",
+            node: node,
+            declaration: declaration,
+            context: context
+        ) else { return [] }
 
         return [
-            DeclSyntax(eventEnum),
-            DeclSyntax(bridgeClass),
-            DeclSyntax(witnessStruct),
+            DeclSyntax(buildEventEnum(protoName: protoName, methods: methods)),
+            DeclSyntax(buildBridgeClass(protoName: protoName, methods: methods)),
         ]
     }
 }
 
-// MARK: - Event Enum Builder
+// MARK: - @ProtocolWitness (Witness class only)
+
+/// Generates `<Protocol>Witness` for the annotated protocol.
+public struct ProtocolWitnessMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        guard let (protoName, methods) = validateProtocol(
+            macroName: "ProtocolWitness",
+            node: node,
+            declaration: declaration,
+            context: context
+        ) else { return [] }
+
+        return [
+            DeclSyntax(buildWitnessStruct(protoName: protoName, methods: methods, includeStreamBacked: false)),
+        ]
+    }
+}
+
+// MARK: - @DelegateBridge (Event enum + AsyncBridge class + Witness class with streamBacked)
+
+/// Generates `<Protocol>Event`, `<Protocol>AsyncBridge`, and `<Protocol>Witness`
+/// (with `streamBacked`) for the annotated protocol.
+public struct DelegateBridgeMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        guard let (protoName, methods) = validateProtocol(
+            macroName: "DelegateBridge",
+            node: node,
+            declaration: declaration,
+            context: context
+        ) else { return [] }
+
+        return [
+            DeclSyntax(buildEventEnum(protoName: protoName, methods: methods)),
+            DeclSyntax(buildBridgeClass(protoName: protoName, methods: methods)),
+            DeclSyntax(buildWitnessStruct(protoName: protoName, methods: methods, includeStreamBacked: true)),
+        ]
+    }
+}
+
+
 
 private func buildEventEnum(
     protoName: String,
@@ -243,7 +289,8 @@ private func buildBridgeClass(
 
 private func buildWitnessStruct(
     protoName: String,
-    methods: [FunctionDeclSyntax]
+    methods: [FunctionDeclSyntax],
+    includeStreamBacked: Bool
 ) -> ClassDeclSyntax {
 
     let I1 = "    "        // 1-level indent (inside class body)
@@ -304,32 +351,6 @@ private func buildWitnessStruct(
     \(I1)}
     """
 
-    // Static factory building a witness backed by an AsyncStream bridge.
-    let bridgeAssignments = methods.map { fn -> String in
-        let params = fn.signature.parameterClause.parameters
-        let argNames = (0..<params.count).map { "a\($0)" }
-        let closure: String
-        if argNames.isEmpty {
-            closure = "{ bridge._continuation.yield(.\(fn.name.text)) }"
-        } else {
-            let yieldArgs = params.enumerated().map { (i, p) -> String in
-                let label = p.firstName.text == "_" ? "" : p.firstName.text
-                let v = argNames[i]
-                return label.isEmpty ? v : "\(label): \(v)"
-            }.joined(separator: ", ")
-            closure = "{ \(argNames.joined(separator: ", ")) in bridge._continuation.yield(.\(fn.name.text)(\(yieldArgs))) }"
-        }
-        return "\(I3)\(fn.name.text): \(closure)"
-    }.joined(separator: ",\n")
-
-    let bridgeFactory = """
-    \(I1)static func streamBacked(_ bridge: \(protoName)AsyncBridge) -> Self {
-    \(I2).init(
-    \(bridgeAssignments)
-    \(I2))
-    \(I1)}
-    """
-
     // Protocol conformance: forward to the underscored stored closure.
     let conformanceImpl = methods.map { fn -> String in
         let params = fn.signature.parameterClause.parameters
@@ -352,29 +373,81 @@ private func buildWitnessStruct(
         """
     }.joined(separator: "\n")
 
+    // Optional streamBacked factory (only when paired with @AsyncStreamBridge or using @DelegateBridge).
+    let streamBackedSection: String
+    if includeStreamBacked {
+        let bridgeAssignments = methods.map { fn -> String in
+            let params = fn.signature.parameterClause.parameters
+            let argNames = (0..<params.count).map { "a\($0)" }
+            let closure: String
+            if argNames.isEmpty {
+                closure = "{ bridge._continuation.yield(.\(fn.name.text)) }"
+            } else {
+                let yieldArgs = params.enumerated().map { (i, p) -> String in
+                    let label = p.firstName.text == "_" ? "" : p.firstName.text
+                    let v = argNames[i]
+                    return label.isEmpty ? v : "\(label): \(v)"
+                }.joined(separator: ", ")
+                closure = "{ \(argNames.joined(separator: ", ")) in bridge._continuation.yield(.\(fn.name.text)(\(yieldArgs))) }"
+            }
+            return "\(I3)\(fn.name.text): \(closure)"
+        }.joined(separator: ",\n")
+
+        streamBackedSection = """
+
+
+        \(I1)static func streamBacked(_ bridge: \(protoName)AsyncBridge) -> Self {
+        \(I2).init(
+        \(bridgeAssignments)
+        \(I2))
+        \(I1)}
+        """
+    } else {
+        streamBackedSection = ""
+    }
+
+    let docComment: String
+    if includeStreamBacked {
+        docComment = """
+        /// Auto-generated protocol-witness struct for `\(protoName)`.
+        ///
+        /// Allows dependency injection, mocking, and `AsyncStream` interop
+        /// without inheriting from `NSObject`.
+        ///
+        /// Usage:
+        /// ```swift
+        /// // Wrap a concrete delegate:
+        /// let witness = \(protoName)Witness(delegate: myConcreteDelegate)
+        ///
+        /// // Or drive from an AsyncStream bridge:
+        /// let bridge = \(protoName)AsyncBridge()
+        /// let witness = \(protoName)Witness.streamBacked(bridge)
+        /// ```
+        """
+    } else {
+        docComment = """
+        /// Auto-generated protocol-witness struct for `\(protoName)`.
+        ///
+        /// Allows dependency injection, mocking, and `AsyncStream` interop
+        /// without inheriting from `NSObject`.
+        ///
+        /// Usage:
+        /// ```swift
+        /// // Wrap a concrete delegate:
+        /// let witness = \(protoName)Witness(delegate: myConcreteDelegate)
+        /// ```
+        """
+    }
+
     let src = """
-    /// Auto-generated protocol-witness struct for `\(protoName)`.
-    ///
-    /// Allows dependency injection, mocking, and `AsyncStream` interop
-    /// without inheriting from `NSObject`.
-    ///
-    /// Usage:
-    /// ```swift
-    /// // Wrap a concrete delegate:
-    /// let witness = \(protoName)Witness(delegate: myConcreteDelegate)
-    ///
-    /// // Or drive from an AsyncStream bridge:
-    /// let bridge = \(protoName)AsyncBridge()
-    /// let witness = \(protoName)Witness.streamBacked(bridge)
-    /// ```
+    \(docComment)
     final class \(protoName)Witness: \(protoName) {
     \(closureProps)
 
     \(designatedInit)
 
     \(concreteInit)
-
-    \(bridgeFactory)
+    \(streamBackedSection)
 
     \(I1)// MARK: - \(protoName) conformance
     \(conformanceImpl)

@@ -1,11 +1,11 @@
 # DelegateBridge
 
-A Swift macro that converts any delegate protocol into:
+A Swift macro library that converts any delegate protocol into:
 
 - An **AsyncStream** event pipeline  
 - A **protocol-witness struct** for dependency injection and mocking
 
-No boilerplate. One annotation.
+Choose the granularity that fits your use case — one annotation or two.
 
 ---
 
@@ -27,6 +27,20 @@ class MyVC: UIViewController, CLLocationManagerDelegate {
 
 ## The Solution
 
+Three macros — use whichever combination you need:
+
+| Macro | Generates |
+|-------|-----------|
+| `@AsyncStreamBridge` | `<P>Event` enum + `<P>AsyncBridge` class |
+| `@ProtocolWitness` | `<P>Witness` class |
+| `@DelegateBridge` | All three (convenience shorthand for both above) |
+
+---
+
+## `@AsyncStreamBridge`
+
+Generates an event enum and an `NSObject` bridge class that feeds delegate callbacks into an `AsyncStream`.
+
 ```swift
 @AsyncStreamBridge
 protocol LocationDelegate: AnyObject {
@@ -35,13 +49,7 @@ protocol LocationDelegate: AnyObject {
 }
 ```
 
-The macro generates **three types** automatically.
-
----
-
-## Generated Types
-
-### 1. `LocationDelegateEvent` — Sendable enum
+### Generated: `LocationDelegateEvent` — Sendable enum
 
 ```swift
 enum LocationDelegateEvent: Sendable {
@@ -50,36 +58,70 @@ enum LocationDelegateEvent: Sendable {
 }
 ```
 
-### 2. `LocationDelegateAsyncBridge` — `@MainActor` NSObject delegate
+### Generated: `LocationDelegateAsyncBridge` — `@MainActor` NSObject delegate
 
 ```swift
 @MainActor
 final class LocationDelegateAsyncBridge: NSObject, LocationDelegate {
     let events: AsyncStream<LocationDelegateEvent>  // unified stream
-    let didUpdateLocationStream: AsyncStream<CLLocation>  // per-method stream
-    let didFailWithErrorStream: AsyncStream<Error>
 
     func finish()  // call when the delegate owner is torn down
 }
 ```
 
-### 3. `LocationDelegateWitness` — closure-based protocol witness
+---
+
+## `@ProtocolWitness`
+
+Generates a lightweight closure-based struct that conforms to the protocol without inheriting from `NSObject`. Ideal for testing and dependency injection.
 
 ```swift
-struct LocationDelegateWitness: LocationDelegate {
-    var didUpdateLocation: (CLLocation) -> Void
-    var didFailWithError: (Error) -> Void
-
-    init(delegate: some LocationDelegate)           // wraps any concrete type
-    static func streamBacked(_ bridge: ...) -> Self // wires into a bridge
+@ProtocolWitness
+protocol LocationDelegate: AnyObject {
+    func didUpdateLocation(_ location: CLLocation)
+    func didFailWithError(_ error: Error)
 }
+```
+
+### Generated: `LocationDelegateWitness` — closure-based protocol witness
+
+```swift
+final class LocationDelegateWitness: LocationDelegate {
+    init(
+        didUpdateLocation: @escaping (CLLocation) -> Void,
+        didFailWithError: @escaping (Error) -> Void
+    )
+    init(delegate: some LocationDelegate)  // wraps any concrete type
+}
+```
+
+---
+
+## `@DelegateBridge`
+
+Convenience macro that generates all three types at once. Also adds a `streamBacked` factory to the witness for wiring it to an async bridge.
+
+```swift
+@DelegateBridge
+protocol LocationDelegate: AnyObject {
+    func didUpdateLocation(_ location: CLLocation)
+    func didFailWithError(_ error: Error)
+}
+
+// Generated: LocationDelegateEvent, LocationDelegateAsyncBridge, LocationDelegateWitness
+```
+
+The witness gains an additional factory:
+
+```swift
+static func streamBacked(_ bridge: LocationDelegateAsyncBridge) -> LocationDelegateWitness
 ```
 
 ---
 
 ## Usage Patterns
 
-### Pattern A — Unified AsyncStream
+### Pattern A — Unified AsyncStream (`@AsyncStreamBridge`)
 
 ```swift
 let bridge = LocationDelegateAsyncBridge()
@@ -97,32 +139,26 @@ Task {
 }
 ```
 
-### Pattern B — Typed per-method stream
+### Pattern B — Protocol Witness for testing (`@ProtocolWitness`)
 
 ```swift
-let bridge = LocationDelegateAsyncBridge.makeFull()
-locationManager.delegate = bridge
-
-// Only care about location updates
-for await location in bridge.didUpdateLocationStream {
-    process(location)
-}
-```
-
-### Pattern C — Protocol Witness (testing / DI)
-
-```swift
-// Production: wrap a real delegate
-let witness = LocationDelegateWitness(delegate: realDelegate)
-
 // Testing: supply closures, no NSObject inheritance needed
 let mock = LocationDelegateWitness(
     didUpdateLocation: { loc in XCTAssertEqual(loc, expected) },
     didFailWithError:  { _ in XCTFail("Unexpected error") }
 )
 
-// TCA / SwiftUI environment: bridge → witness
+// Production: wrap a real delegate
+let witness = LocationDelegateWitness(delegate: realDelegate)
+```
+
+### Pattern C — Bridge + Witness together (`@DelegateBridge`)
+
+```swift
 let bridge = LocationDelegateAsyncBridge()
+locationManager.delegate = bridge
+
+// TCA / SwiftUI environment: bridge → witness
 let witness = LocationDelegateWitness.streamBacked(bridge)
 ```
 
@@ -171,7 +207,14 @@ await withTaskGroup(of: Void.self) { group in
 ```swift
 import DelegateBridge
 
-@AsyncStreamBridge
+// Choose based on your needs:
+@AsyncStreamBridge   // stream only
+protocol YourDelegate: AnyObject { ... }
+
+@ProtocolWitness     // witness only
+protocol YourDelegate: AnyObject { ... }
+
+@DelegateBridge      // both stream + witness
 protocol YourDelegate: AnyObject { ... }
 ```
 
@@ -181,16 +224,17 @@ protocol YourDelegate: AnyObject { ... }
 
 ```
 DelegateBridge (library)
-└─ @AsyncStreamBridge macro declaration
+├─ @AsyncStreamBridge macro declaration  → suffixed(Event), suffixed(AsyncBridge)
+├─ @ProtocolWitness macro declaration    → suffixed(Witness)
+└─ @DelegateBridge macro declaration     → suffixed(Event), suffixed(AsyncBridge), suffixed(Witness)
 
 DelegateBridgeMacros (compiler plugin)
-├─ AsyncStreamBridgeMacro      — PeerMacro implementation
-├─ buildEventEnum()            — generates <P>Event enum
-├─ buildBridgeClass()          — generates <P>AsyncBridge
-└─ buildWitnessStruct()        — generates <P>Witness
+├─ AsyncStreamBridgeMacro   — PeerMacro: buildEventEnum() + buildBridgeClass()
+├─ ProtocolWitnessMacro     — PeerMacro: buildWitnessStruct() (no streamBacked)
+└─ DelegateBridgeMacro      — PeerMacro: all three builders (Witness includes streamBacked)
 ```
 
-The macro is a `@attached(peer)` macro, meaning it generates new top-level
+The macros are `@attached(peer)` macros, meaning they generate new top-level
 declarations alongside the annotated protocol without modifying it.
 
 ---
