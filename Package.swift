@@ -4,7 +4,7 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "DelegateBridge",
-    platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .watchOS(.v10)],
+    platforms: [.macOS(.v14), .iOS(.v15), .tvOS(.v17), .watchOS(.v10)],
     products: [
         .library(name: "DelegateBridge", targets: ["DelegateBridge"]),
     ],
