@@ -11,7 +11,7 @@ Choose the granularity that fits your use case — one annotation or two.
 
 ## The Problem
 
-Cocoa and UIKit delegate patterns are callback-based and hard to integrate with Swift Concurrency:
+Delegate-driven APIs across Apple frameworks are callback-based and hard to integrate with Swift Concurrency:
 
 ```swift
 // Old world: scattered callbacks, no composability
@@ -198,7 +198,7 @@ await withTaskGroup(of: Void.self) { group in
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/your-org/DelegateBridge", from: "1.0.0")
+.package(url: "https://github.com/markst/DelegateBridge", from: "1.0.0")
 
 // Target dependency
 .product(name: "DelegateBridge", package: "DelegateBridge")
@@ -217,27 +217,6 @@ protocol YourDelegate: AnyObject { ... }
 @DelegateBridge      // both stream + witness
 protocol YourDelegate: AnyObject { ... }
 ```
-
----
-
-## Architecture
-
-```
-DelegateBridge (library)
-├─ @AsyncStreamBridge macro declaration  → suffixed(Event), suffixed(AsyncBridge)
-├─ @ProtocolWitness macro declaration    → suffixed(Witness)
-└─ @DelegateBridge macro declaration     → suffixed(Event), suffixed(AsyncBridge), suffixed(Witness)
-
-DelegateBridgeMacros (compiler plugin)
-├─ AsyncStreamBridgeMacro   — PeerMacro: buildEventEnum() + buildBridgeClass()
-├─ ProtocolWitnessMacro     — PeerMacro: buildWitnessStruct() (no streamBacked)
-└─ DelegateBridgeMacro      — PeerMacro: all three builders (Witness includes streamBacked)
-```
-
-The macros are `@attached(peer)` macros, meaning they generate new top-level
-declarations alongside the annotated protocol without modifying it.
-
----
 
 ## License
 
