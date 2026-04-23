@@ -11,7 +11,7 @@ Choose the granularity that fits your use case — one annotation or two.
 
 ## The Problem
 
-Delegate-driven APIs across Apple frameworks are callback-based and hard to integrate with Swift Concurrency:
+Delegate protocols are a widely-used pattern in Swift. They are callback-based and hard to integrate with Swift Concurrency:
 
 ```swift
 // Old world: scattered callbacks, no composability
