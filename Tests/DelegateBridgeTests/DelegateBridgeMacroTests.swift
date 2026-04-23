@@ -364,6 +364,121 @@ final class DelegateBridgeMacroTests: XCTestCase {
         )
     }
 
+    // ── Test: @ProtocolWitness with async throws and return type ─────────────
+    func testProtocolWitnessAsyncThrowsReturn() throws {
+        assertMacroExpansion(
+            """
+            @ProtocolWitness
+            protocol LoginAPIProviding {
+                func login(with email: String, password: String) async throws -> LoginResult
+            }
+            """,
+            expandedSource: """
+            protocol LoginAPIProviding {
+                func login(with email: String, password: String) async throws -> LoginResult
+            }
+
+            /// Auto-generated protocol-witness struct for `LoginAPIProviding`.
+            ///
+            /// Allows dependency injection, mocking, and `AsyncStream` interop
+            /// without inheriting from `NSObject`.
+            ///
+            /// Usage:
+            /// ```swift
+            /// // Wrap a concrete delegate:
+            /// let witness = LoginAPIProvidingWitness(delegate: myConcreteDelegate)
+            /// ```
+            final class LoginAPIProvidingWitness: LoginAPIProviding {
+                private let _login: (String, String) async throws -> LoginResult
+
+                init(
+                    login: @escaping (String, String) async throws -> LoginResult
+                ) {
+                    self._login = login
+                }
+
+                convenience init(delegate: some LoginAPIProviding) {
+                    self.init(
+                        login: { email, password in
+                            try await delegate.login(with: email, password: password)
+                        }
+                    )
+                }
+
+
+                // MARK: - LoginAPIProviding conformance
+                func login(with email: String, password: String) async throws -> LoginResult {
+                    return try await _login(email, password)
+                }
+            }
+            """,
+            macros: macros
+        )
+    }
+
+    // ── Test: @ProtocolWitness with non-void synchronous return ────────────
+    func testProtocolWitnessNonVoidReturn() throws {
+        assertMacroExpansion(
+            """
+            @ProtocolWitness
+            protocol QueryDelegate {
+                func shouldProceed() -> Bool
+                func didFinish()
+            }
+            """,
+            expandedSource: """
+            protocol QueryDelegate {
+                func shouldProceed() -> Bool
+                func didFinish()
+            }
+
+            /// Auto-generated protocol-witness struct for `QueryDelegate`.
+            ///
+            /// Allows dependency injection, mocking, and `AsyncStream` interop
+            /// without inheriting from `NSObject`.
+            ///
+            /// Usage:
+            /// ```swift
+            /// // Wrap a concrete delegate:
+            /// let witness = QueryDelegateWitness(delegate: myConcreteDelegate)
+            /// ```
+            final class QueryDelegateWitness: QueryDelegate {
+                private let _shouldProceed: () -> Bool
+                private let _didFinish: () -> Void
+
+                init(
+                    shouldProceed: @escaping () -> Bool,
+                    didFinish: @escaping () -> Void
+                ) {
+                    self._shouldProceed = shouldProceed
+                    self._didFinish = didFinish
+                }
+
+                convenience init(delegate: some QueryDelegate) {
+                    self.init(
+                        shouldProceed: {
+                            delegate.shouldProceed()
+                        },
+                        didFinish: {
+                            delegate.didFinish()
+                        }
+                    )
+                }
+
+
+                // MARK: - QueryDelegate conformance
+                func shouldProceed() -> Bool {
+                    return _shouldProceed()
+                }
+                func didFinish() {
+                    _didFinish()
+                }
+            }
+            """,
+            macros: macros
+        )
+    }
+
     // ── Test 7: @ProtocolWitness on a non-protocol emits error ────────────────
     func testProtocolWitnessNonProtocolDiagnostic() throws {
         assertMacroExpansion(
