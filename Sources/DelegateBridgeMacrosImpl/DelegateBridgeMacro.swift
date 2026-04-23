@@ -51,6 +51,19 @@ private extension FunctionSignatureSyntax {
         let t = ret.type.trimmedDescription
         return t == "Void" || t == "()"
     }
+
+    var returnTypeText: String {
+        guard let ret = returnClause else { return "Void" }
+        return ret.type.trimmedDescription
+    }
+
+    var isAsync: Bool {
+        effectSpecifiers?.asyncSpecifier != nil
+    }
+
+    var isThrowing: Bool {
+        effectSpecifiers?.throwsSpecifier != nil
+    }
 }
 
 // MARK: - Shared Validation
@@ -59,7 +72,8 @@ private func validateProtocol(
     macroName: String,
     node: AttributeSyntax,
     declaration: some DeclSyntaxProtocol,
-    context: some MacroExpansionContext
+    in context: some MacroExpansionContext,
+    requireVoidReturn: Bool = true
 ) -> (protoName: String, methods: [FunctionDeclSyntax])? {
     guard let proto = declaration.as(ProtocolDeclSyntax.self) else {
         context.diagnose(Diagnostic(
@@ -83,15 +97,20 @@ private func validateProtocol(
         return nil
     }
 
-    let bridgeable = allMethods.filter { fn in
-        guard fn.signature.isVoidReturn else {
-            context.diagnose(Diagnostic(
-                node: fn,
-                message: DelegateBridgeDiagnostic.voidReturnRequired(method: fn.name.text)
-            ))
-            return false
+    let bridgeable: [FunctionDeclSyntax]
+    if requireVoidReturn {
+        bridgeable = allMethods.filter { fn in
+            guard fn.signature.isVoidReturn else {
+                context.diagnose(Diagnostic(
+                    node: fn,
+                    message: DelegateBridgeDiagnostic.voidReturnRequired(method: fn.name.text)
+                ))
+                return false
+            }
+            return true
         }
-        return true
+    } else {
+        bridgeable = allMethods
     }
 
     return (protoName, bridgeable)
@@ -110,7 +129,7 @@ public struct AsyncStreamBridgeMacro: PeerMacro {
             macroName: "AsyncStreamBridge",
             node: node,
             declaration: declaration,
-            context: context
+            in: context
         ) else { return [] }
 
         return [
@@ -133,7 +152,8 @@ public struct ProtocolWitnessMacro: PeerMacro {
             macroName: "ProtocolWitness",
             node: node,
             declaration: declaration,
-            context: context
+            in: context,
+            requireVoidReturn: false
         ) else { return [] }
 
         return [
@@ -156,7 +176,7 @@ public struct DelegateBridgeMacro: PeerMacro {
             macroName: "DelegateBridge",
             node: node,
             declaration: declaration,
-            context: context
+            in: context
         ) else { return [] }
 
         return [
@@ -302,14 +322,24 @@ private func buildWitnessStruct(
     let closureProps = methods.map { fn -> String in
         let params = fn.signature.parameterClause.parameters
         let paramTypes = params.map(\.typeText).joined(separator: ", ")
-        return "\(I1)private let _\(fn.name.text): (\(paramTypes)) -> Void"
+        let sig = fn.signature
+        let effects = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
+            .compactMap { $0 }.joined(separator: " ")
+        let effectsStr = effects.isEmpty ? "" : " \(effects)"
+        let returnType = sig.returnTypeText
+        return "\(I1)private let _\(fn.name.text): (\(paramTypes))\(effectsStr) -> \(returnType)"
     }.joined(separator: "\n")
 
     // Designated init: takes one closure per method.
     let initParamList = methods.map { fn -> String in
         let params = fn.signature.parameterClause.parameters
         let types = params.map(\.typeText).joined(separator: ", ")
-        return "\(fn.name.text): @escaping (\(types)) -> Void"
+        let sig = fn.signature
+        let effects = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
+            .compactMap { $0 }.joined(separator: " ")
+        let effectsStr = effects.isEmpty ? "" : " \(effects)"
+        let returnType = sig.returnTypeText
+        return "\(fn.name.text): @escaping (\(types))\(effectsStr) -> \(returnType)"
     }.joined(separator: ",\n\(I2)")
 
     let initAssignments = methods.map { fn in
@@ -327,9 +357,13 @@ private func buildWitnessStruct(
     // Convenience init wrapping a concrete delegate value.
     let concreteAssignments = methods.map { fn -> String in
         let params = fn.signature.parameterClause.parameters
+        let sig = fn.signature
+        let callPrefix = [sig.isThrowing ? "try" : nil, sig.isAsync ? "await" : nil]
+            .compactMap { $0 }.joined(separator: " ")
+        let callPrefixStr = callPrefix.isEmpty ? "" : "\(callPrefix) "
         let closure: String
         if params.isEmpty {
-            closure = "{ delegate.\(fn.name.text)() }"
+            closure = "{ \(callPrefixStr)delegate.\(fn.name.text)() }"
         } else {
             let argNames = params.map { p in p.secondName?.text ?? p.firstName.text }
             let callArgs = params.map { p -> String in
@@ -338,7 +372,7 @@ private func buildWitnessStruct(
                 if ext == "_" { return int }
                 return "\(ext): \(int)"
             }.joined(separator: ", ")
-            closure = "{ \(argNames.joined(separator: ", ")) in delegate.\(fn.name.text)(\(callArgs)) }"
+            closure = "{ \(argNames.joined(separator: ", ")) in \(callPrefixStr)delegate.\(fn.name.text)(\(callArgs)) }"
         }
         return "\(I3)\(fn.name.text): \(closure)"
     }.joined(separator: ",\n")
@@ -366,9 +400,18 @@ private func buildWitnessStruct(
         let argList = params.map { p in
             p.secondName?.text ?? p.firstName.text
         }.joined(separator: ", ")
+        let sig = fn.signature
+        let effectsDecl = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
+            .compactMap { $0 }.joined(separator: " ")
+        let effectsDeclStr = effectsDecl.isEmpty ? "" : " \(effectsDecl)"
+        let returnDecl = sig.isVoidReturn ? "" : " -> \(sig.returnTypeText)"
+        let callPrefix = [sig.isThrowing ? "try" : nil, sig.isAsync ? "await" : nil]
+            .compactMap { $0 }.joined(separator: " ")
+        let callPrefixStr = callPrefix.isEmpty ? "" : "\(callPrefix) "
+        let returnKeyword = sig.isVoidReturn ? "" : "return "
         return """
-        \(I1)func \(fn.name.text)(\(paramList)) {
-        \(I2)_\(fn.name.text)(\(argList))
+        \(I1)func \(fn.name.text)(\(paramList))\(effectsDeclStr)\(returnDecl) {
+        \(I2)\(returnKeyword)\(callPrefixStr)_\(fn.name.text)(\(argList))
         \(I1)}
         """
     }.joined(separator: "\n")
