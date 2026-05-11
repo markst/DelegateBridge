@@ -50,6 +50,10 @@ private extension FunctionParameterSyntax {
     var typeText: String { type.trimmedDescription }
 }
 
+/// Splits a function-signature suffix into effect specifiers and return type using
+/// the first top-level `->` delimiter (ignoring nested delimiters).
+/// This supports fallback parsing when structured SwiftSyntax nodes do not carry
+/// typed-throws details.
 private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterArrow: String?) {
     var parenDepth = 0
     var bracketDepth = 0
@@ -89,6 +93,8 @@ private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterA
     return (text.trimmingCharacters(in: .whitespacesAndNewlines), nil)
 }
 
+/// Detects standalone keywords (for example `async` and `throws`) using word
+/// boundaries to avoid accidental substring matches inside identifiers.
 private func containsKeyword(_ text: String, keyword: String) -> Bool {
     text.range(of: "\\b\(keyword)\\b", options: .regularExpression) != nil
 }
@@ -139,7 +145,9 @@ private extension ProtocolMethod {
     var textualTailAfterParameters: String {
         let full = rawDeclText
         let marker = "\(fn.name.text)\(fn.signature.parameterClause.trimmedDescription)"
-        guard let markerRange = full.range(of: marker) else { return fn.signature.trailingSignatureText }
+        guard let markerRange = full.range(of: marker, options: .backwards) else {
+            return fn.signature.trailingSignatureText
+        }
         return String(full[markerRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
