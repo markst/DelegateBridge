@@ -90,9 +90,7 @@ private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterA
 }
 
 private func containsKeyword(_ text: String, keyword: String) -> Bool {
-    text
-        .split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_") })
-        .contains { $0 == keyword }
+    text.range(of: "\\b\(keyword)\\b", options: .regularExpression) != nil
 }
 
 private extension FunctionSignatureSyntax {
