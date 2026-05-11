@@ -54,7 +54,6 @@ private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterA
     var parenDepth = 0
     var bracketDepth = 0
     var braceDepth = 0
-    var angleDepth = 0
 
     let chars = Array(text)
     var i = 0
@@ -67,15 +66,12 @@ private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterA
         case "]": bracketDepth = max(0, bracketDepth - 1)
         case "{": braceDepth += 1
         case "}": braceDepth = max(0, braceDepth - 1)
-        case "<": angleDepth += 1
-        case ">": angleDepth = max(0, angleDepth - 1)
         case "-":
             if i + 1 < chars.count,
                chars[i + 1] == ">",
                parenDepth == 0,
                bracketDepth == 0,
-               braceDepth == 0,
-               angleDepth == 0 {
+               braceDepth == 0 {
                 let before = String(chars[..<i]).trimmingCharacters(in: .whitespacesAndNewlines)
                 let after = String(chars[(i + 2)...]).trimmingCharacters(in: .whitespacesAndNewlines)
                 return (before, after.isEmpty ? nil : after)
@@ -87,6 +83,19 @@ private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterA
     }
 
     return (text.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+}
+
+private func containsKeyword(_ text: String, keyword: String) -> Bool {
+    var token = ""
+    for c in text {
+        if c.isLetter || c.isNumber || c == "_" {
+            token.append(c)
+        } else {
+            if token == keyword { return true }
+            token = ""
+        }
+    }
+    return token == keyword
 }
 
 private extension FunctionSignatureSyntax {
@@ -115,11 +124,11 @@ private extension FunctionSignatureSyntax {
     }
 
     var isAsync: Bool {
-        effectSpecifiers?.asyncSpecifier != nil || effectSpecifiersText.contains("async")
+        effectSpecifiers?.asyncSpecifier != nil || containsKeyword(effectSpecifiersText, keyword: "async")
     }
 
     var isThrowing: Bool {
-        effectSpecifiers?.throwsSpecifier != nil || effectSpecifiersText.contains("throws")
+        effectSpecifiers?.throwsSpecifier != nil || containsKeyword(effectSpecifiersText, keyword: "throws")
     }
 
     var effectSpecifiersText: String {
@@ -157,11 +166,11 @@ private extension ProtocolMethod {
     }
 
     var isAsyncResolved: Bool {
-        resolvedEffectSpecifiersText.contains("async")
+        containsKeyword(resolvedEffectSpecifiersText, keyword: "async")
     }
 
     var isThrowingResolved: Bool {
-        resolvedEffectSpecifiersText.contains("throws")
+        containsKeyword(resolvedEffectSpecifiersText, keyword: "throws")
     }
 
     var isVoidReturnResolved: Bool {
