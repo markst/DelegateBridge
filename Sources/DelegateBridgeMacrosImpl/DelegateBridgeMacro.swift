@@ -61,11 +61,11 @@ private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterA
         let c = chars[i]
         switch c {
         case "(": parenDepth += 1
-        case ")": parenDepth = max(0, parenDepth - 1)
+        case ")": parenDepth -= 1
         case "[": bracketDepth += 1
-        case "]": bracketDepth = max(0, bracketDepth - 1)
+        case "]": bracketDepth -= 1
         case "{": braceDepth += 1
-        case "}": braceDepth = max(0, braceDepth - 1)
+        case "}": braceDepth -= 1
         case "-":
             if i + 1 < chars.count,
                chars[i + 1] == ">",
@@ -86,16 +86,9 @@ private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterA
 }
 
 private func containsKeyword(_ text: String, keyword: String) -> Bool {
-    var token = ""
-    for c in text {
-        if c.isLetter || c.isNumber || c == "_" {
-            token.append(c)
-        } else {
-            if token == keyword { return true }
-            token = ""
-        }
-    }
-    return token == keyword
+    text
+        .split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_") })
+        .contains { $0 == keyword }
 }
 
 private extension FunctionSignatureSyntax {
