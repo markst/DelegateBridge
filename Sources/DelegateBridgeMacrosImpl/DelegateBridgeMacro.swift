@@ -55,31 +55,35 @@ private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterA
     var bracketDepth = 0
     var braceDepth = 0
 
-    let chars = Array(text)
-    var i = 0
-    while i < chars.count {
-        let c = chars[i]
+    var i = text.startIndex
+    while i < text.endIndex {
+        let c = text[i]
         switch c {
         case "(": parenDepth += 1
-        case ")": parenDepth -= 1
+        case ")":
+            if parenDepth > 0 { parenDepth -= 1 }
         case "[": bracketDepth += 1
-        case "]": bracketDepth -= 1
+        case "]":
+            if bracketDepth > 0 { bracketDepth -= 1 }
         case "{": braceDepth += 1
-        case "}": braceDepth -= 1
+        case "}":
+            if braceDepth > 0 { braceDepth -= 1 }
         case "-":
-            if i + 1 < chars.count,
-               chars[i + 1] == ">",
+            let next = text.index(after: i)
+            if next < text.endIndex,
+               text[next] == ">",
                parenDepth == 0,
                bracketDepth == 0,
                braceDepth == 0 {
-                let before = String(chars[..<i]).trimmingCharacters(in: .whitespacesAndNewlines)
-                let after = String(chars[(i + 2)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let before = String(text[..<i]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let afterStart = text.index(after: next)
+                let after = String(text[afterStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
                 return (before, after.isEmpty ? nil : after)
             }
         default:
             break
         }
-        i += 1
+        i = text.index(after: i)
     }
 
     return (text.trimmingCharacters(in: .whitespacesAndNewlines), nil)
