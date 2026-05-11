@@ -50,6 +50,45 @@ private extension FunctionParameterSyntax {
     var typeText: String { type.trimmedDescription }
 }
 
+private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterArrow: String?) {
+    var parenDepth = 0
+    var bracketDepth = 0
+    var braceDepth = 0
+    var angleDepth = 0
+
+    let chars = Array(text)
+    var i = 0
+    while i < chars.count {
+        let c = chars[i]
+        switch c {
+        case "(": parenDepth += 1
+        case ")": parenDepth = max(0, parenDepth - 1)
+        case "[": bracketDepth += 1
+        case "]": bracketDepth = max(0, bracketDepth - 1)
+        case "{": braceDepth += 1
+        case "}": braceDepth = max(0, braceDepth - 1)
+        case "<": angleDepth += 1
+        case ">": angleDepth = max(0, angleDepth - 1)
+        case "-":
+            if i + 1 < chars.count,
+               chars[i + 1] == ">",
+               parenDepth == 0,
+               bracketDepth == 0,
+               braceDepth == 0,
+               angleDepth == 0 {
+                let before = String(chars[..<i]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let after = String(chars[(i + 2)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                return (before, after.isEmpty ? nil : after)
+            }
+        default:
+            break
+        }
+        i += 1
+    }
+
+    return (text.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+}
+
 private extension FunctionSignatureSyntax {
     var trailingSignatureText: String {
         let full = trimmedDescription
@@ -60,14 +99,8 @@ private extension FunctionSignatureSyntax {
 
     var parsedEffectsAndReturn: (effects: String, returnType: String?) {
         let trailing = trailingSignatureText
-        guard let arrowRange = trailing.range(of: "->") else {
-            return (trailing.trimmingCharacters(in: .whitespacesAndNewlines), nil)
-        }
-        let effects = trailing[..<arrowRange.lowerBound]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let returnType = trailing[arrowRange.upperBound...]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (effects, returnType.isEmpty ? nil : returnType)
+        let (effects, returnType) = splitTopLevelArrow(in: trailing)
+        return (effects, returnType)
     }
 
     var isVoidReturn: Bool {
@@ -108,12 +141,8 @@ private extension ProtocolMethod {
 
     var parsedEffectsAndReturn: (effects: String, returnType: String?) {
         let tail = textualTailAfterParameters
-        guard let arrowRange = tail.range(of: "->") else {
-            return (tail.trimmingCharacters(in: .whitespacesAndNewlines), nil)
-        }
-        let effects = tail[..<arrowRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
-        let returnType = tail[arrowRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-        return (effects, returnType.isEmpty ? nil : returnType)
+        let (effects, returnType) = splitTopLevelArrow(in: tail)
+        return (effects, returnType)
     }
 
     var resolvedEffectSpecifiersText: String {
