@@ -93,7 +93,7 @@ private func splitTopLevelArrow(in text: String) -> (beforeArrow: String, afterA
     return (text.trimmingCharacters(in: .whitespacesAndNewlines), nil)
 }
 
-/// Detects standalone keywords (for example `async` and `throws`) using word
+/// Detects whether a standalone keyword token exists in text using word
 /// boundaries to avoid accidental substring matches inside identifiers.
 private func containsKeyword(_ text: String, keyword: String) -> Bool {
     text.range(of: "\\b\(keyword)\\b", options: .regularExpression) != nil
@@ -142,6 +142,10 @@ private extension FunctionSignatureSyntax {
 private extension ProtocolMethod {
     var fn: FunctionDeclSyntax { syntax }
 
+    /// Returns the signature suffix after `<name><parameterClause>`.
+    /// This fallback expects `rawDeclText` to be a single protocol method
+    /// declaration and may degrade if that exact marker is duplicated in custom
+    /// attributes/modifiers. In that case we fall back to syntax-only parsing.
     var textualTailAfterParameters: String {
         let full = rawDeclText
         let marker = "\(fn.name.text)\(fn.signature.parameterClause.trimmedDescription)"
