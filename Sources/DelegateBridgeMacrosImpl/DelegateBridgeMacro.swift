@@ -430,8 +430,8 @@ private func buildWitnessStruct(
         let fn = method.fn
         let params = fn.signature.parameterClause.parameters
         let paramTypes = params.map(\.typeText).joined(separator: ", ")
-        let effects = method.resolvedEffectSpecifiersText
-        let effectsStr = effects.isEmpty ? "" : " \(effects)"
+        let effectSpecifiers = method.resolvedEffectSpecifiersText
+        let effectsStr = effectSpecifiers.isEmpty ? "" : " \(effectSpecifiers)"
         let returnType = method.resolvedReturnTypeText
         return "\(I1)private let _\(fn.name.text): (\(paramTypes))\(effectsStr) -> \(returnType)"
     }.joined(separator: "\n")
@@ -441,8 +441,8 @@ private func buildWitnessStruct(
         let fn = method.fn
         let params = fn.signature.parameterClause.parameters
         let types = params.map(\.typeText).joined(separator: ", ")
-        let effects = method.resolvedEffectSpecifiersText
-        let effectsStr = effects.isEmpty ? "" : " \(effects)"
+        let effectSpecifiers = method.resolvedEffectSpecifiersText
+        let effectsStr = effectSpecifiers.isEmpty ? "" : " \(effectSpecifiers)"
         let returnType = method.resolvedReturnTypeText
         return "\(fn.name.text): @escaping (\(types))\(effectsStr) -> \(returnType)"
     }.joined(separator: ",\n\(I2)")
@@ -507,8 +507,8 @@ private func buildWitnessStruct(
         let argList = params.map { p in
             p.secondName?.text ?? p.firstName.text
         }.joined(separator: ", ")
-        let effectsDecl = method.resolvedEffectSpecifiersText
-        let effectsDeclStr = effectsDecl.isEmpty ? "" : " \(effectsDecl)"
+        let effectSpecifiersDecl = method.resolvedEffectSpecifiersText
+        let effectsDeclStr = effectSpecifiersDecl.isEmpty ? "" : " \(effectSpecifiersDecl)"
         let returnDecl = method.isVoidReturnResolved ? "" : " -> \(method.resolvedReturnTypeText)"
         let callPrefix = [method.isThrowingResolved ? "try" : nil, method.isAsyncResolved ? "await" : nil]
             .compactMap { $0 }.joined(separator: " ")
