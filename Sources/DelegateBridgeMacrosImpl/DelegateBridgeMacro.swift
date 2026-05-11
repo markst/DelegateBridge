@@ -33,6 +33,11 @@ enum DelegateBridgeDiagnostic: DiagnosticMessage {
     var severity: DiagnosticSeverity { .error }
 }
 
+private struct ProtocolMethod {
+    let syntax: FunctionDeclSyntax
+    let rawDeclText: String
+}
+
 // MARK: - Helpers
 
 private extension FunctionParameterSyntax {
@@ -46,23 +51,93 @@ private extension FunctionParameterSyntax {
 }
 
 private extension FunctionSignatureSyntax {
+    var trailingSignatureText: String {
+        let full = trimmedDescription
+        let params = parameterClause.trimmedDescription
+        guard full.hasPrefix(params) else { return full }
+        return String(full.dropFirst(params.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var parsedEffectsAndReturn: (effects: String, returnType: String?) {
+        let trailing = trailingSignatureText
+        guard let arrowRange = trailing.range(of: "->") else {
+            return (trailing.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+        }
+        let effects = trailing[..<arrowRange.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let returnType = trailing[arrowRange.upperBound...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (effects, returnType.isEmpty ? nil : returnType)
+    }
+
     var isVoidReturn: Bool {
-        guard let ret = returnClause else { return true }
-        let t = ret.type.trimmedDescription
+        let t = returnTypeText
         return t == "Void" || t == "()"
     }
 
     var returnTypeText: String {
-        guard let ret = returnClause else { return "Void" }
-        return ret.type.trimmedDescription
+        if let parsed = parsedEffectsAndReturn.returnType { return parsed }
+        if let ret = returnClause { return ret.type.trimmedDescription }
+        return "Void"
     }
 
     var isAsync: Bool {
-        effectSpecifiers?.asyncSpecifier != nil
+        effectSpecifiers?.asyncSpecifier != nil || effectSpecifiersText.contains("async")
     }
 
     var isThrowing: Bool {
-        effectSpecifiers?.throwsSpecifier != nil
+        effectSpecifiers?.throwsSpecifier != nil || effectSpecifiersText.contains("throws")
+    }
+
+    var effectSpecifiersText: String {
+        let parsed = parsedEffectsAndReturn.effects
+        if !parsed.isEmpty { return parsed }
+        return effectSpecifiers?.trimmedDescription ?? ""
+    }
+}
+
+private extension ProtocolMethod {
+    var fn: FunctionDeclSyntax { syntax }
+
+    var textualTailAfterParameters: String {
+        let full = rawDeclText
+        let marker = "\(fn.name.text)\(fn.signature.parameterClause.trimmedDescription)"
+        guard let markerRange = full.range(of: marker) else { return fn.signature.trailingSignatureText }
+        return String(full[markerRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var parsedEffectsAndReturn: (effects: String, returnType: String?) {
+        let tail = textualTailAfterParameters
+        guard let arrowRange = tail.range(of: "->") else {
+            return (tail.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+        }
+        let effects = tail[..<arrowRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        let returnType = tail[arrowRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return (effects, returnType.isEmpty ? nil : returnType)
+    }
+
+    var resolvedEffectSpecifiersText: String {
+        let parsed = parsedEffectsAndReturn.effects
+        if !parsed.isEmpty { return parsed }
+        return fn.signature.effectSpecifiersText
+    }
+
+    var resolvedReturnTypeText: String {
+        if let parsed = parsedEffectsAndReturn.returnType { return parsed }
+        return fn.signature.returnTypeText
+    }
+
+    var isAsyncResolved: Bool {
+        resolvedEffectSpecifiersText.contains("async")
+    }
+
+    var isThrowingResolved: Bool {
+        resolvedEffectSpecifiersText.contains("throws")
+    }
+
+    var isVoidReturnResolved: Bool {
+        let returnType = resolvedReturnTypeText
+        return returnType == "Void" || returnType == "()"
     }
 }
 
@@ -74,7 +149,7 @@ private func validateProtocol(
     declaration: some DeclSyntaxProtocol,
     in context: some MacroExpansionContext,
     requireVoidReturn: Bool = true
-) -> (protoName: String, methods: [FunctionDeclSyntax])? {
+) -> (protoName: String, methods: [ProtocolMethod])? {
     guard let proto = declaration.as(ProtocolDeclSyntax.self) else {
         context.diagnose(Diagnostic(
             node: node,
@@ -85,8 +160,9 @@ private func validateProtocol(
 
     let protoName = proto.name.text
 
-    let allMethods: [FunctionDeclSyntax] = proto.memberBlock.members.compactMap {
-        $0.decl.as(FunctionDeclSyntax.self)
+    let allMethods: [ProtocolMethod] = proto.memberBlock.members.compactMap { member in
+        guard let fn = member.decl.as(FunctionDeclSyntax.self) else { return nil }
+        return ProtocolMethod(syntax: fn, rawDeclText: member.decl.trimmedDescription)
     }
 
     guard !allMethods.isEmpty else {
@@ -97,13 +173,13 @@ private func validateProtocol(
         return nil
     }
 
-    let bridgeable: [FunctionDeclSyntax]
+    let bridgeable: [ProtocolMethod]
     if requireVoidReturn {
-        bridgeable = allMethods.filter { fn in
-            guard fn.signature.isVoidReturn else {
+        bridgeable = allMethods.filter { method in
+            guard method.fn.signature.isVoidReturn else {
                 context.diagnose(Diagnostic(
-                    node: fn,
-                    message: DelegateBridgeDiagnostic.voidReturnRequired(method: fn.name.text)
+                    node: method.fn,
+                    message: DelegateBridgeDiagnostic.voidReturnRequired(method: method.fn.name.text)
                 ))
                 return false
             }
@@ -191,9 +267,10 @@ public struct DelegateBridgeMacro: PeerMacro {
 
 private func buildEventEnum(
     protoName: String,
-    methods: [FunctionDeclSyntax]
+    methods: [ProtocolMethod]
 ) -> EnumDeclSyntax {
-    let cases = methods.map { fn -> String in
+    let cases = methods.map { method -> String in
+        let fn = method.fn
         let params = fn.signature.parameterClause.parameters
         if params.isEmpty {
             return "    case \(fn.name.text)"
@@ -219,7 +296,7 @@ private func buildEventEnum(
 
 private func buildBridgeClass(
     protoName: String,
-    methods: [FunctionDeclSyntax]
+    methods: [ProtocolMethod]
 ) -> ClassDeclSyntax {
 
     // Build per-method stream properties + method implementations
@@ -245,7 +322,8 @@ private func buildBridgeClass(
 
     // Protocol method implementations
     body += "    // MARK: - \(protoName) conformance\n"
-    for fn in methods {
+    for method in methods {
+        let fn = method.fn
         let methodName = fn.name.text
         let params = fn.signature.parameterClause.parameters
 
@@ -309,7 +387,7 @@ private func buildBridgeClass(
 
 private func buildWitnessStruct(
     protoName: String,
-    methods: [FunctionDeclSyntax],
+    methods: [ProtocolMethod],
     includeStreamBacked: Bool
 ) -> ClassDeclSyntax {
 
@@ -319,31 +397,30 @@ private func buildWitnessStruct(
 
     // Private closure storage. Prefixed with `_` to avoid redeclaration
     // conflicts with same-named protocol methods (especially zero-arg ones).
-    let closureProps = methods.map { fn -> String in
+    let closureProps = methods.map { method -> String in
+        let fn = method.fn
         let params = fn.signature.parameterClause.parameters
         let paramTypes = params.map(\.typeText).joined(separator: ", ")
-        let sig = fn.signature
-        let effects = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
-            .compactMap { $0 }.joined(separator: " ")
+        let effects = method.resolvedEffectSpecifiersText
         let effectsStr = effects.isEmpty ? "" : " \(effects)"
-        let returnType = sig.returnTypeText
+        let returnType = method.resolvedReturnTypeText
         return "\(I1)private let _\(fn.name.text): (\(paramTypes))\(effectsStr) -> \(returnType)"
     }.joined(separator: "\n")
 
     // Designated init: takes one closure per method.
-    let initParamList = methods.map { fn -> String in
+    let initParamList = methods.map { method -> String in
+        let fn = method.fn
         let params = fn.signature.parameterClause.parameters
         let types = params.map(\.typeText).joined(separator: ", ")
-        let sig = fn.signature
-        let effects = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
-            .compactMap { $0 }.joined(separator: " ")
+        let effects = method.resolvedEffectSpecifiersText
         let effectsStr = effects.isEmpty ? "" : " \(effects)"
-        let returnType = sig.returnTypeText
+        let returnType = method.resolvedReturnTypeText
         return "\(fn.name.text): @escaping (\(types))\(effectsStr) -> \(returnType)"
     }.joined(separator: ",\n\(I2)")
 
-    let initAssignments = methods.map { fn in
-        "\(I2)self._\(fn.name.text) = \(fn.name.text)"
+    let initAssignments = methods.map { method in
+        let fn = method.fn
+        return "\(I2)self._\(fn.name.text) = \(fn.name.text)"
     }.joined(separator: "\n")
 
     let designatedInit = """
@@ -355,10 +432,10 @@ private func buildWitnessStruct(
     """
 
     // Convenience init wrapping a concrete delegate value.
-    let concreteAssignments = methods.map { fn -> String in
+    let concreteAssignments = methods.map { method -> String in
+        let fn = method.fn
         let params = fn.signature.parameterClause.parameters
-        let sig = fn.signature
-        let callPrefix = [sig.isThrowing ? "try" : nil, sig.isAsync ? "await" : nil]
+        let callPrefix = [method.isThrowingResolved ? "try" : nil, method.isAsyncResolved ? "await" : nil]
             .compactMap { $0 }.joined(separator: " ")
         let callPrefixStr = callPrefix.isEmpty ? "" : "\(callPrefix) "
         let closure: String
@@ -386,7 +463,8 @@ private func buildWitnessStruct(
     """
 
     // Protocol conformance: forward to the underscored stored closure.
-    let conformanceImpl = methods.map { fn -> String in
+    let conformanceImpl = methods.map { method -> String in
+        let fn = method.fn
         let params = fn.signature.parameterClause.parameters
         let paramList = params.map { p -> String in
             let ext = p.firstName.text
@@ -400,15 +478,13 @@ private func buildWitnessStruct(
         let argList = params.map { p in
             p.secondName?.text ?? p.firstName.text
         }.joined(separator: ", ")
-        let sig = fn.signature
-        let effectsDecl = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
-            .compactMap { $0 }.joined(separator: " ")
+        let effectsDecl = method.resolvedEffectSpecifiersText
         let effectsDeclStr = effectsDecl.isEmpty ? "" : " \(effectsDecl)"
-        let returnDecl = sig.isVoidReturn ? "" : " -> \(sig.returnTypeText)"
-        let callPrefix = [sig.isThrowing ? "try" : nil, sig.isAsync ? "await" : nil]
+        let returnDecl = method.isVoidReturnResolved ? "" : " -> \(method.resolvedReturnTypeText)"
+        let callPrefix = [method.isThrowingResolved ? "try" : nil, method.isAsyncResolved ? "await" : nil]
             .compactMap { $0 }.joined(separator: " ")
         let callPrefixStr = callPrefix.isEmpty ? "" : "\(callPrefix) "
-        let returnKeyword = sig.isVoidReturn ? "" : "return "
+        let returnKeyword = method.isVoidReturnResolved ? "" : "return "
         return """
         \(I1)func \(fn.name.text)(\(paramList))\(effectsDeclStr)\(returnDecl) {
         \(I2)\(returnKeyword)\(callPrefixStr)_\(fn.name.text)(\(argList))
@@ -419,7 +495,8 @@ private func buildWitnessStruct(
     // Optional streamBacked factory (only when paired with @AsyncStreamBridge or using @DelegateBridge).
     let streamBackedSection: String
     if includeStreamBacked {
-        let bridgeAssignments = methods.map { fn -> String in
+        let bridgeAssignments = methods.map { method -> String in
+            let fn = method.fn
             let params = fn.signature.parameterClause.parameters
             let argNames = (0..<params.count).map { "a\($0)" }
             let closure: String
