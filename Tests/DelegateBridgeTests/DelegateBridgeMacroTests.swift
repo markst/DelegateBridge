@@ -369,16 +369,16 @@ final class DelegateBridgeMacroTests: XCTestCase {
         assertMacroExpansion(
             """
             @ProtocolWitness
-            protocol LoginAPIProviding {
+            protocol AuthProviding {
                 func login(with email: String, password: String) async throws -> LoginResult
             }
             """,
             expandedSource: """
-            protocol LoginAPIProviding {
+            protocol AuthProviding {
                 func login(with email: String, password: String) async throws -> LoginResult
             }
 
-            /// Auto-generated protocol-witness struct for `LoginAPIProviding`.
+            /// Auto-generated protocol-witness struct for `AuthProviding`.
             ///
             /// Allows dependency injection, mocking, and `AsyncStream` interop
             /// without inheriting from `NSObject`.
@@ -386,9 +386,9 @@ final class DelegateBridgeMacroTests: XCTestCase {
             /// Usage:
             /// ```swift
             /// // Wrap a concrete delegate:
-            /// let witness = LoginAPIProvidingWitness(delegate: myConcreteDelegate)
+            /// let witness = AuthProvidingWitness(delegate: myConcreteDelegate)
             /// ```
-            final class LoginAPIProvidingWitness: LoginAPIProviding {
+            final class AuthProvidingWitness: AuthProviding {
                 private let _login: (String, String) async throws -> LoginResult
 
                 init(
@@ -397,7 +397,7 @@ final class DelegateBridgeMacroTests: XCTestCase {
                     self._login = login
                 }
 
-                convenience init(delegate: some LoginAPIProviding) {
+                convenience init(delegate: some AuthProviding) {
                     self.init(
                         login: { email, password in
                             try await delegate.login(with: email, password: password)
@@ -406,7 +406,7 @@ final class DelegateBridgeMacroTests: XCTestCase {
                 }
 
 
-                // MARK: - LoginAPIProviding conformance
+                // MARK: - AuthProviding conformance
                 func login(with email: String, password: String) async throws -> LoginResult {
                     return try await _login(email, password)
                 }
@@ -421,16 +421,16 @@ final class DelegateBridgeMacroTests: XCTestCase {
         assertMacroExpansion(
             """
             @ProtocolWitness
-            protocol LoginAPIProviding {
+            protocol AuthProviding {
                 func login(with email: String, password: String) async throws(MyError) -> LoginResult
             }
             """,
             expandedSource: """
-            protocol LoginAPIProviding {
+            protocol AuthProviding {
                 func login(with email: String, password: String) async throws(MyError) -> LoginResult
             }
 
-            /// Auto-generated protocol-witness struct for `LoginAPIProviding`.
+            /// Auto-generated protocol-witness struct for `AuthProviding`.
             ///
             /// Allows dependency injection, mocking, and `AsyncStream` interop
             /// without inheriting from `NSObject`.
@@ -438,9 +438,9 @@ final class DelegateBridgeMacroTests: XCTestCase {
             /// Usage:
             /// ```swift
             /// // Wrap a concrete delegate:
-            /// let witness = LoginAPIProvidingWitness(delegate: myConcreteDelegate)
+            /// let witness = AuthProvidingWitness(delegate: myConcreteDelegate)
             /// ```
-            final class LoginAPIProvidingWitness: LoginAPIProviding {
+            final class AuthProvidingWitness: AuthProviding {
                 private let _login: (String, String) async throws(MyError) -> LoginResult
 
                 init(
@@ -449,7 +449,7 @@ final class DelegateBridgeMacroTests: XCTestCase {
                     self._login = login
                 }
 
-                convenience init(delegate: some LoginAPIProviding) {
+                convenience init(delegate: some AuthProviding) {
                     self.init(
                         login: { (email: String, password: String) async throws(MyError) -> LoginResult in
                             try await delegate.login(with: email, password: password)
@@ -458,7 +458,7 @@ final class DelegateBridgeMacroTests: XCTestCase {
                 }
 
 
-                // MARK: - LoginAPIProviding conformance
+                // MARK: - AuthProviding conformance
                 func login(with email: String, password: String) async throws(MyError) -> LoginResult {
                     return try await _login(email, password)
                 }
@@ -474,12 +474,12 @@ final class DelegateBridgeMacroTests: XCTestCase {
             """
             @ProtocolWitness
             protocol MyProtocol {
-                func throwingFunction() async throws(StanError)
+                func throwingFunction() async throws(MyError)
             }
             """,
             expandedSource: """
             protocol MyProtocol {
-                func throwingFunction() async throws(StanError)
+                func throwingFunction() async throws(MyError)
             }
 
             /// Auto-generated protocol-witness struct for `MyProtocol`.
@@ -493,17 +493,17 @@ final class DelegateBridgeMacroTests: XCTestCase {
             /// let witness = MyProtocolWitness(delegate: myConcreteDelegate)
             /// ```
             final class MyProtocolWitness: MyProtocol {
-                private let _throwingFunction: () async throws(StanError) -> Void
+                private let _throwingFunction: () async throws(MyError) -> Void
 
                 init(
-                    throwingFunction: @escaping () async throws(StanError) -> Void
+                    throwingFunction: @escaping () async throws(MyError) -> Void
                 ) {
                     self._throwingFunction = throwingFunction
                 }
 
                 convenience init(delegate: some MyProtocol) {
                     self.init(
-                        throwingFunction: { () async throws(StanError) in
+                        throwingFunction: { () async throws(MyError) in
                             try await delegate.throwingFunction()
                         }
                     )
@@ -511,7 +511,7 @@ final class DelegateBridgeMacroTests: XCTestCase {
 
 
                 // MARK: - MyProtocol conformance
-                func throwingFunction() async throws(StanError) {
+                func throwingFunction() async throws(MyError) {
                     try await _throwingFunction()
                 }
             }
