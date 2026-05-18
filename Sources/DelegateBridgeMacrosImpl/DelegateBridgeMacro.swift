@@ -62,7 +62,14 @@ private extension FunctionSignatureSyntax {
     }
 
     var isThrowing: Bool {
-        effectSpecifiers?.throwsSpecifier != nil
+        effectSpecifiers?.throwsClause != nil
+    }
+
+    /// Returns `"throws"` for untyped throws, `"throws(ErrorType)"` for typed throws,
+    /// or `nil` when the function is non-throwing.
+    var throwsText: String? {
+        guard let clause = effectSpecifiers?.throwsClause else { return nil }
+        return clause.trimmedDescription
     }
 }
 
@@ -323,7 +330,7 @@ private func buildWitnessStruct(
         let params = fn.signature.parameterClause.parameters
         let paramTypes = params.map(\.typeText).joined(separator: ", ")
         let sig = fn.signature
-        let effects = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
+        let effects = [sig.isAsync ? "async" : nil, sig.throwsText]
             .compactMap { $0 }.joined(separator: " ")
         let effectsStr = effects.isEmpty ? "" : " \(effects)"
         let returnType = sig.returnTypeText
@@ -335,7 +342,7 @@ private func buildWitnessStruct(
         let params = fn.signature.parameterClause.parameters
         let types = params.map(\.typeText).joined(separator: ", ")
         let sig = fn.signature
-        let effects = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
+        let effects = [sig.isAsync ? "async" : nil, sig.throwsText]
             .compactMap { $0 }.joined(separator: " ")
         let effectsStr = effects.isEmpty ? "" : " \(effects)"
         let returnType = sig.returnTypeText
@@ -401,7 +408,7 @@ private func buildWitnessStruct(
             p.secondName?.text ?? p.firstName.text
         }.joined(separator: ", ")
         let sig = fn.signature
-        let effectsDecl = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
+        let effectsDecl = [sig.isAsync ? "async" : nil, sig.throwsText]
             .compactMap { $0 }.joined(separator: " ")
         let effectsDeclStr = effectsDecl.isEmpty ? "" : " \(effectsDecl)"
         let returnDecl = sig.isVoidReturn ? "" : " -> \(sig.returnTypeText)"
