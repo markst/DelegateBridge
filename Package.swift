@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "DelegateBridge", targets: ["DelegateBridge"]),
     ],
     dependencies: [
+        // swift-syntax 600+ is required for typed throws parsing and the `throwsClause` API.
         .package(url: "https://github.com/swiftlang/swift-syntax.git", "600.0.0"..<"604.0.0"),
     ],
     targets: [
