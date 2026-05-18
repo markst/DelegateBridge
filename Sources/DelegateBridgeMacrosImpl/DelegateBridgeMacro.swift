@@ -368,9 +368,23 @@ private func buildWitnessStruct(
         let callPrefix = [sig.isThrowing ? "try" : nil, sig.isAsync ? "await" : nil]
             .compactMap { $0 }.joined(separator: " ")
         let callPrefixStr = callPrefix.isEmpty ? "" : "\(callPrefix) "
+        let needsExplicitClosureSignature = sig.throwsText?.contains("(") == true
+        let closureParams = params.map { p in
+            let name = p.secondName?.text ?? p.firstName.text
+            return "\(name): \(p.typeText)"
+        }.joined(separator: ", ")
+        let closureParamList = params.isEmpty ? "()" : "(\(closureParams))"
+        let closureEffects = [sig.isAsync ? "async" : nil, sig.throwsText]
+            .compactMap { $0 }.joined(separator: " ")
+        let closureEffectsStr = closureEffects.isEmpty ? "" : " \(closureEffects)"
+        let closureReturnStr = sig.isVoidReturn ? "" : " -> \(sig.returnTypeText)"
         let closure: String
         if params.isEmpty {
-            closure = "{ \(callPrefixStr)delegate.\(fn.name.text)() }"
+            if needsExplicitClosureSignature {
+                closure = "{ \(closureParamList)\(closureEffectsStr)\(closureReturnStr) in \(callPrefixStr)delegate.\(fn.name.text)() }"
+            } else {
+                closure = "{ \(callPrefixStr)delegate.\(fn.name.text)() }"
+            }
         } else {
             let argNames = params.map { p in p.secondName?.text ?? p.firstName.text }
             let callArgs = params.map { p -> String in
@@ -379,7 +393,11 @@ private func buildWitnessStruct(
                 if ext == "_" { return int }
                 return "\(ext): \(int)"
             }.joined(separator: ", ")
-            closure = "{ \(argNames.joined(separator: ", ")) in \(callPrefixStr)delegate.\(fn.name.text)(\(callArgs)) }"
+            if needsExplicitClosureSignature {
+                closure = "{ \(closureParamList)\(closureEffectsStr)\(closureReturnStr) in \(callPrefixStr)delegate.\(fn.name.text)(\(callArgs)) }"
+            } else {
+                closure = "{ \(argNames.joined(separator: ", ")) in \(callPrefixStr)delegate.\(fn.name.text)(\(callArgs)) }"
+            }
         }
         return "\(I3)\(fn.name.text): \(closure)"
     }.joined(separator: ",\n")

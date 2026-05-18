@@ -451,7 +451,7 @@ final class DelegateBridgeMacroTests: XCTestCase {
 
                 convenience init(delegate: some LoginAPIProviding) {
                     self.init(
-                        login: { email, password in
+                        login: { (email: String, password: String) async throws(MyError) -> LoginResult in
                             try await delegate.login(with: email, password: password)
                         }
                     )
@@ -461,6 +461,58 @@ final class DelegateBridgeMacroTests: XCTestCase {
                 // MARK: - LoginAPIProviding conformance
                 func login(with email: String, password: String) async throws(MyError) -> LoginResult {
                     return try await _login(email, password)
+                }
+            }
+            """,
+            macros: macros
+        )
+    }
+
+    // ── Test: @ProtocolWitness with zero-arg async typed throws ───────────────
+    func testProtocolWitnessZeroArgAsyncTypedThrows() throws {
+        assertMacroExpansion(
+            """
+            @ProtocolWitness
+            protocol MyProtocol {
+                func throwingFunction() async throws(StanError)
+            }
+            """,
+            expandedSource: """
+            protocol MyProtocol {
+                func throwingFunction() async throws(StanError)
+            }
+
+            /// Auto-generated protocol-witness struct for `MyProtocol`.
+            ///
+            /// Allows dependency injection, mocking, and `AsyncStream` interop
+            /// without inheriting from `NSObject`.
+            ///
+            /// Usage:
+            /// ```swift
+            /// // Wrap a concrete delegate:
+            /// let witness = MyProtocolWitness(delegate: myConcreteDelegate)
+            /// ```
+            final class MyProtocolWitness: MyProtocol {
+                private let _throwingFunction: () async throws(StanError) -> Void
+
+                init(
+                    throwingFunction: @escaping () async throws(StanError) -> Void
+                ) {
+                    self._throwingFunction = throwingFunction
+                }
+
+                convenience init(delegate: some MyProtocol) {
+                    self.init(
+                        throwingFunction: { () async throws(StanError) in
+                            try await delegate.throwingFunction()
+                        }
+                    )
+                }
+
+
+                // MARK: - MyProtocol conformance
+                func throwingFunction() async throws(StanError) {
+                    try await _throwingFunction()
                 }
             }
             """,
@@ -503,7 +555,7 @@ final class DelegateBridgeMacroTests: XCTestCase {
 
                 convenience init(delegate: some ParserProviding) {
                     self.init(
-                        parse: { input in
+                        parse: { (input: String) throws(ParseError) -> ParsedResult in
                             try delegate.parse(input)
                         }
                     )
