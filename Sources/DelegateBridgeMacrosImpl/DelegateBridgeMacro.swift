@@ -62,7 +62,14 @@ private extension FunctionSignatureSyntax {
     }
 
     var isThrowing: Bool {
-        effectSpecifiers?.throwsSpecifier != nil
+        effectSpecifiers?.throwsClause != nil
+    }
+
+    /// Returns `"throws"` for untyped throws, `"throws(ErrorType)"` for typed throws,
+    /// or `nil` when the function is non-throwing.
+    var throwsText: String? {
+        guard let clause = effectSpecifiers?.throwsClause else { return nil }
+        return clause.trimmedDescription
     }
 }
 
@@ -323,7 +330,7 @@ private func buildWitnessStruct(
         let params = fn.signature.parameterClause.parameters
         let paramTypes = params.map(\.typeText).joined(separator: ", ")
         let sig = fn.signature
-        let effects = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
+        let effects = [sig.isAsync ? "async" : nil, sig.throwsText]
             .compactMap { $0 }.joined(separator: " ")
         let effectsStr = effects.isEmpty ? "" : " \(effects)"
         let returnType = sig.returnTypeText
@@ -335,7 +342,7 @@ private func buildWitnessStruct(
         let params = fn.signature.parameterClause.parameters
         let types = params.map(\.typeText).joined(separator: ", ")
         let sig = fn.signature
-        let effects = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
+        let effects = [sig.isAsync ? "async" : nil, sig.throwsText]
             .compactMap { $0 }.joined(separator: " ")
         let effectsStr = effects.isEmpty ? "" : " \(effects)"
         let returnType = sig.returnTypeText
@@ -361,9 +368,23 @@ private func buildWitnessStruct(
         let callPrefix = [sig.isThrowing ? "try" : nil, sig.isAsync ? "await" : nil]
             .compactMap { $0 }.joined(separator: " ")
         let callPrefixStr = callPrefix.isEmpty ? "" : "\(callPrefix) "
+        let needsExplicitClosureSignature = sig.throwsText?.contains("(") == true
+        let closureParams = params.map { p in
+            let name = p.secondName?.text ?? p.firstName.text
+            return "\(name): \(p.typeText)"
+        }.joined(separator: ", ")
+        let closureParamList = params.isEmpty ? "()" : "(\(closureParams))"
+        let closureEffects = [sig.isAsync ? "async" : nil, sig.throwsText]
+            .compactMap { $0 }.joined(separator: " ")
+        let closureEffectsStr = closureEffects.isEmpty ? "" : " \(closureEffects)"
+        let closureReturnStr = sig.isVoidReturn ? "" : " -> \(sig.returnTypeText)"
         let closure: String
         if params.isEmpty {
-            closure = "{ \(callPrefixStr)delegate.\(fn.name.text)() }"
+            if needsExplicitClosureSignature {
+                closure = "{ \(closureParamList)\(closureEffectsStr)\(closureReturnStr) in \(callPrefixStr)delegate.\(fn.name.text)() }"
+            } else {
+                closure = "{ \(callPrefixStr)delegate.\(fn.name.text)() }"
+            }
         } else {
             let argNames = params.map { p in p.secondName?.text ?? p.firstName.text }
             let callArgs = params.map { p -> String in
@@ -372,7 +393,11 @@ private func buildWitnessStruct(
                 if ext == "_" { return int }
                 return "\(ext): \(int)"
             }.joined(separator: ", ")
-            closure = "{ \(argNames.joined(separator: ", ")) in \(callPrefixStr)delegate.\(fn.name.text)(\(callArgs)) }"
+            if needsExplicitClosureSignature {
+                closure = "{ \(closureParamList)\(closureEffectsStr)\(closureReturnStr) in \(callPrefixStr)delegate.\(fn.name.text)(\(callArgs)) }"
+            } else {
+                closure = "{ \(argNames.joined(separator: ", ")) in \(callPrefixStr)delegate.\(fn.name.text)(\(callArgs)) }"
+            }
         }
         return "\(I3)\(fn.name.text): \(closure)"
     }.joined(separator: ",\n")
@@ -401,7 +426,7 @@ private func buildWitnessStruct(
             p.secondName?.text ?? p.firstName.text
         }.joined(separator: ", ")
         let sig = fn.signature
-        let effectsDecl = [sig.isAsync ? "async" : nil, sig.isThrowing ? "throws" : nil]
+        let effectsDecl = [sig.isAsync ? "async" : nil, sig.throwsText]
             .compactMap { $0 }.joined(separator: " ")
         let effectsDeclStr = effectsDecl.isEmpty ? "" : " \(effectsDecl)"
         let returnDecl = sig.isVoidReturn ? "" : " -> \(sig.returnTypeText)"
